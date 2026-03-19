@@ -1,0 +1,38 @@
+---
+# Grafana Alloy role metadata
+
+galaxy_info:
+  author: TDE Lab
+  description: >-
+    Grafana Alloy unified telemetry collector.
+    Replaces Promtail (log shipping to Loki) and node_exporter (host metrics for Prometheus).
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: Fedora
+      versions:
+        - "43"
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - noble
+
+  galaxy_tags:
+    - monitoring
+    - logging
+    - alloy
+    - grafana
+    - prometheus
+    - loki
+    - metrics
+
+dependencies:
+  - role: common
+    when: install_common | default(true)

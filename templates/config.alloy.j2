@@ -1,0 +1,122 @@
+// Grafana Alloy Configuration
+// Managed by Ansible - Do not edit manually
+// Replaces: Promtail (log shipping) + node_exporter (host metrics)
+
+// ============================================================
+// LOG COLLECTION: Systemd Journal → Loki
+// ============================================================
+
+// Relabel rules for journal metadata extraction
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "hostname"
+  }
+}
+
+// Read from systemd journal
+loki.source.journal "default" {
+  forward_to    = [loki.process.default.receiver]
+  max_age       = "{{ alloy_journal_max_age }}"
+  path          = "{{ alloy_journal_path }}"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = {
+    job  = "systemd-journal",
+    host = "{{ inventory_hostname }}",
+  }
+}
+
+// Log processing pipeline
+// Extracts and normalizes log level from journal priority and application log formats
+loki.process "default" {
+  forward_to = [loki.write.default.receiver]
+
+  // Stage 1: Extract level from journal priority keyword
+  // Alloy provides __journal_priority_keyword natively as text:
+  // emerg, alert, crit, err, warning, notice, info, debug
+  // This replaces the complex numeric-to-text Go template used in Promtail
+  stage.labels {
+    values = {
+      level = "__journal_priority_keyword",
+    }
+  }
+
+  // Stage 2: Extract application log level from Python logging format: "- INFO -"
+{% raw %}
+  stage.regex {
+    expression = "- (?P<app_level>INFO|WARNING|ERROR|DEBUG|CRITICAL) -"
+  }
+
+  // Stage 3: Extract from JSON format: "level":"info" (Caddy, etc.)
+  stage.regex {
+    expression = "\"level\"\\s*:\\s*\"(?P<app_level>[a-zA-Z]+)\""
+  }
+
+  // Stage 4: Extract from logfmt format: level=info or Level=INFO
+  stage.regex {
+    expression = "(?i)level=(?P<app_level>info|warn|warning|error|debug|critical|notice|trace|fatal|panic)"
+  }
+
+  // Stage 5: Normalize extracted levels
+  // - Lowercase app_level
+  // - Override journal level with app-specific level when found
+  // - Fix syslog abbreviations: err→error, crit→critical, warn→warning
+  stage.template {
+    source   = "app_level"
+    template = "{{ ToLower .Value }}"
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if .app_level }}{{ .app_level }}{{ else }}{{ .Value }}{{ end }}"
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if eq .Value \"err\" }}error{{ else if eq .Value \"crit\" }}critical{{ else if eq .Value \"warn\" }}warning{{ else }}{{ .Value }}{{ end }}"
+  }
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+{% endraw %}
+}
+
+// Push logs to Loki
+loki.write "default" {
+  endpoint {
+    url = "{{ alloy_loki_url }}"
+{% if alloy_loki_url.startswith('https') and alloy_ca_file %}
+    tls_config {
+      ca_file = "{{ alloy_ca_file }}"
+    }
+{% endif %}
+  }
+}
+
+// ============================================================
+// HOST METRICS: prometheus.exporter.unix (replaces node_exporter)
+// ============================================================
+// Metrics served at /api/v0/component/prometheus.exporter.unix.default/metrics
+// on port {{ alloy_listen_port }} (same port as old node_exporter)
+
+prometheus.exporter.unix "default" {
+  set_collectors = {{ alloy_collectors | tojson }}
+
+  filesystem {
+    mount_points_exclude = "{{ alloy_filesystem_mount_exclude }}"
+  }
+
+{% if alloy_textfile_dir %}
+  textfile {
+    directory = "{{ alloy_textfile_dir }}"
+  }
+{% endif %}
+
+  systemd {}
+}

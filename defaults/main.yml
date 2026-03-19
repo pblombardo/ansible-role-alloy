@@ -1,0 +1,59 @@
+---
+# Grafana Alloy - Unified telemetry collector
+# Replaces both Promtail (log shipping) and node_exporter (host metrics)
+
+# ============================================================
+# LOKI LOG COLLECTION
+# ============================================================
+
+# Loki push endpoint
+# Remote hosts use HTTPS via Caddy reverse proxy with step-ca TLS
+# Override to http://127.0.0.1:3100/loki/api/v1/push on the monitoring host
+alloy_loki_url: "https://loki.thedeviledegg.lab/loki/api/v1/push"
+
+# TLS CA certificate for HTTPS connections to Loki
+# Set to empty string to disable TLS config (e.g. when using HTTP localhost)
+alloy_ca_file: "/etc/ssl/certs/tde-lab-ca-bundle.pem"
+
+# Journal scrape settings
+alloy_journal_max_age: "12h"
+alloy_journal_path: "/var/log/journal"
+
+# ============================================================
+# HOST METRICS (prometheus.exporter.unix)
+# ============================================================
+
+# HTTP server listen port (same as old node_exporter)
+# Metrics available at /api/v0/component/prometheus.exporter.unix.default/metrics
+alloy_listen_port: 9100
+alloy_listen_address: "0.0.0.0"
+
+# Alloy data directory (WAL, positions, etc.)
+alloy_storage_path: "/var/lib/alloy"
+
+# Textfile collector directory (preserved from node_exporter for compatibility)
+alloy_textfile_dir: "/var/lib/node_exporter/textfile_collector"
+
+# Enabled collectors (matching previous node_exporter config)
+alloy_collectors:
+  - cpu
+  - diskstats
+  - filesystem
+  - loadavg
+  - meminfo
+  - netdev
+  - time
+  - systemd
+
+# Filesystem mount points to exclude from collection
+alloy_filesystem_mount_exclude: "^/(sys|proc|dev|run)($|/)"
+
+# ============================================================
+# CLEANUP OPTIONS
+# ============================================================
+
+# Remove old Promtail agent (binary, config, service, user)
+alloy_cleanup_promtail: true
+
+# Remove old node_exporter agent (binary/container, service, user)
+alloy_cleanup_node_exporter: true

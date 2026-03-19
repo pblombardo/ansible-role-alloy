@@ -1,0 +1,378 @@
+---
+# Grafana Alloy role - Main tasks
+# Deploys Grafana Alloy as a unified telemetry collector,
+# replacing both Promtail (log shipping) and node_exporter (host metrics).
+
+# ============================================================
+# INSTALL: Grafana APT/RPM Repository + Package
+# ============================================================
+
+- name: Install Grafana GPG key (Debian/Ubuntu)
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: '0644'
+    force: true
+  when: ansible_os_family == 'Debian'
+  tags:
+    - alloy
+    - install
+
+- name: Add Grafana APT repository (Debian/Ubuntu)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+    update_cache: true
+  when: ansible_os_family == 'Debian'
+  tags:
+    - alloy
+    - install
+
+- name: Import Grafana GPG key (RHEL/Fedora)
+  ansible.builtin.rpm_key:
+    key: https://rpm.grafana.com/gpg.key
+    state: present
+  when: ansible_os_family == 'RedHat'
+  tags:
+    - alloy
+    - install
+
+- name: Add Grafana RPM repository (RHEL/Fedora)
+  ansible.builtin.yum_repository:
+    name: grafana
+    description: Grafana OSS Repository
+    baseurl: https://rpm.grafana.com
+    gpgcheck: true
+    gpgkey: https://rpm.grafana.com/gpg.key
+    sslverify: true
+    sslcacert: /etc/pki/tls/certs/ca-bundle.crt
+    enabled: true
+  when: ansible_os_family == 'RedHat'
+  tags:
+    - alloy
+    - install
+
+- name: Install Alloy package
+  ansible.builtin.package:
+    name: alloy
+    state: present
+  tags:
+    - alloy
+    - install
+
+# ============================================================
+# CONFIGURE: User groups, directories, config files
+# ============================================================
+
+- name: Add alloy user to systemd-journal and adm groups
+  ansible.builtin.user:
+    name: alloy
+    groups:
+      - systemd-journal
+      - adm
+    append: true
+  notify: Restart alloy
+  tags:
+    - alloy
+    - configure
+
+- name: Create textfile collector directory
+  ansible.builtin.file:
+    path: "{{ alloy_textfile_dir }}"
+    state: directory
+    owner: alloy
+    group: alloy
+    mode: '0755'
+  when: alloy_textfile_dir | length > 0
+  tags:
+    - alloy
+    - configure
+
+- name: Create Alloy storage directory
+  ansible.builtin.file:
+    path: "{{ alloy_storage_path }}"
+    state: directory
+    owner: alloy
+    group: alloy
+    mode: '0755'
+  tags:
+    - alloy
+    - configure
+
+- name: Deploy Alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: /etc/alloy/config.alloy
+    owner: root
+    group: alloy
+    mode: '0644'
+  notify: Restart alloy
+  tags:
+    - alloy
+    - configure
+
+- name: Deploy Alloy environment file (Debian/Ubuntu)
+  ansible.builtin.template:
+    src: alloy-env.j2
+    dest: /etc/default/alloy
+    owner: root
+    group: root
+    mode: '0644'
+  when: ansible_os_family == 'Debian'
+  notify: Restart alloy
+  tags:
+    - alloy
+    - configure
+
+- name: Deploy Alloy environment file (RHEL/Fedora)
+  ansible.builtin.template:
+    src: alloy-env.j2
+    dest: /etc/sysconfig/alloy
+    owner: root
+    group: root
+    mode: '0644'
+  when: ansible_os_family == 'RedHat'
+  notify: Restart alloy
+  tags:
+    - alloy
+    - configure
+
+# ============================================================
+# SERVICE: Enable and start Alloy
+# ============================================================
+
+- name: Enable and start Alloy service
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags:
+    - alloy
+    - service
+
+- name: Verify Alloy is responding
+  ansible.builtin.uri:
+    url: "http://localhost:{{ alloy_listen_port }}/-/ready"
+    method: GET
+    status_code: 200
+  register: alloy_health
+  retries: 10
+  delay: 3
+  until: alloy_health.status == 200
+  tags:
+    - alloy
+    - verify
+
+# ============================================================
+# CLEANUP: Remove old Promtail agent
+# ============================================================
+
+- name: Check for Promtail service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/promtail.service
+  register: _promtail_service
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Stop and disable Promtail service
+  ansible.builtin.systemd:
+    name: promtail
+    state: stopped
+    enabled: false
+  when:
+    - alloy_cleanup_promtail
+    - _promtail_service.stat.exists | default(false)
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Promtail systemd unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/promtail.service
+    state: absent
+  when:
+    - alloy_cleanup_promtail
+    - _promtail_service.stat.exists | default(false)
+  notify: Reload systemd
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Promtail binary
+  ansible.builtin.file:
+    path: /usr/local/bin/promtail
+    state: absent
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Promtail configuration directory
+  ansible.builtin.file:
+    path: /etc/promtail
+    state: absent
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Promtail data directory
+  ansible.builtin.file:
+    path: /var/lib/promtail
+    state: absent
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Promtail user
+  ansible.builtin.user:
+    name: promtail
+    state: absent
+    remove: true
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+- name: Remove Loki /etc/hosts entry (DNS handles resolution now)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "192.168.20.50 loki.thedeviledegg.lab"
+    state: absent
+  when: alloy_cleanup_promtail
+  tags:
+    - alloy
+    - cleanup
+    - promtail
+
+# ============================================================
+# CLEANUP: Remove old node_exporter agent (systemd binary)
+# ============================================================
+
+- name: Check for node_exporter systemd service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/node_exporter.service
+  register: _node_exporter_service
+  when: alloy_cleanup_node_exporter
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Stop and disable node_exporter systemd service
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: stopped
+    enabled: false
+  when:
+    - alloy_cleanup_node_exporter
+    - _node_exporter_service.stat.exists | default(false)
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove node_exporter systemd unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/node_exporter.service
+    state: absent
+  when:
+    - alloy_cleanup_node_exporter
+    - _node_exporter_service.stat.exists | default(false)
+  notify: Reload systemd
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove node_exporter binary
+  ansible.builtin.file:
+    path: /usr/local/bin/node_exporter
+    state: absent
+  when: alloy_cleanup_node_exporter
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove node_exporter user
+  ansible.builtin.user:
+    name: node_exporter
+    state: absent
+    remove: true
+  when: alloy_cleanup_node_exporter
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+# ============================================================
+# CLEANUP: Remove old node_exporter agent (Podman container)
+# ============================================================
+
+- name: Check for container-node_exporter systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/container-node_exporter.service
+  register: _container_node_exporter_unit
+  when: alloy_cleanup_node_exporter
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Stop and disable container-node_exporter service
+  ansible.builtin.systemd:
+    name: container-node_exporter
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  when:
+    - alloy_cleanup_node_exporter
+    - _container_node_exporter_unit.stat.exists | default(false)
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove container-node_exporter systemd unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/container-node_exporter.service
+    state: absent
+  when:
+    - alloy_cleanup_node_exporter
+    - _container_node_exporter_unit.stat.exists | default(false)
+  notify: Reload systemd
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove node_exporter Podman container
+  ansible.builtin.command:
+    cmd: podman rm -f node_exporter
+  register: _podman_rm_result
+  changed_when: _podman_rm_result.rc == 0
+  failed_when: false
+  when:
+    - alloy_cleanup_node_exporter
+    - _container_node_exporter_unit.stat.exists | default(false)
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+# NOTE: The textfile collector directory (/var/lib/node_exporter/textfile_collector)
+# is intentionally preserved. Alloy's prometheus.exporter.unix reads from it,
+# and external processes may write custom metrics there.
