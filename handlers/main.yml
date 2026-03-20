@@ -6,6 +6,9 @@
     daemon_reload: true
 
 - name: Restart alloy
-  ansible.builtin.systemd:
-    name: alloy
-    state: restarted
+  ansible.builtin.shell:
+    cmd: |
+      systemctl stop alloy || true
+      sleep 2
+      systemctl start alloy
+  changed_when: true
