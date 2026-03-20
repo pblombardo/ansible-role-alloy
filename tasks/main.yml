@@ -388,7 +388,7 @@
 
 - name: Check if prometheus-node-exporter package is installed
   ansible.builtin.shell:
-    cmd: dpkg -l prometheus-node-exporter 2>/dev/null | grep -c '^ii' || echo "0"
+    cmd: dpkg-query -W -f='${Status}' prometheus-node-exporter 2>/dev/null | grep -q 'install ok installed' && echo "installed" || echo "not_installed"
   register: _pkg_node_exporter
   changed_when: false
   when:
@@ -407,7 +407,7 @@
   when:
     - alloy_cleanup_node_exporter
     - ansible_os_family == 'Debian'
-    - (_pkg_node_exporter.stdout | default('0') | trim) != '0'
+    - (_pkg_node_exporter.stdout | default('not_installed') | trim) == 'installed'
   tags:
     - alloy
     - cleanup
@@ -421,7 +421,7 @@
   when:
     - alloy_cleanup_node_exporter
     - ansible_os_family == 'Debian'
-    - (_pkg_node_exporter.stdout | default('0') | trim) != '0'
+    - (_pkg_node_exporter.stdout | default('not_installed') | trim) == 'installed'
   notify: Reload systemd
   tags:
     - alloy
