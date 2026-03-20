@@ -382,6 +382,52 @@
     - cleanup
     - node_exporter
 
+# ============================================================
+# CLEANUP: Remove old node_exporter agent (Debian/Ubuntu package)
+# ============================================================
+
+- name: Check if prometheus-node-exporter package is installed
+  ansible.builtin.shell:
+    cmd: dpkg -l prometheus-node-exporter 2>/dev/null | grep -c '^ii' || echo "0"
+  register: _pkg_node_exporter
+  changed_when: false
+  when:
+    - alloy_cleanup_node_exporter
+    - ansible_os_family == 'Debian'
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Stop and disable prometheus-node-exporter package service
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: stopped
+    enabled: false
+  when:
+    - alloy_cleanup_node_exporter
+    - ansible_os_family == 'Debian'
+    - (_pkg_node_exporter.stdout | default('0') | trim) != '0'
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
+- name: Remove prometheus-node-exporter package
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: absent
+    purge: true
+  when:
+    - alloy_cleanup_node_exporter
+    - ansible_os_family == 'Debian'
+    - (_pkg_node_exporter.stdout | default('0') | trim) != '0'
+  notify: Reload systemd
+  tags:
+    - alloy
+    - cleanup
+    - node_exporter
+
 # NOTE: The textfile collector directory (/var/lib/node_exporter/textfile_collector)
 # is intentionally preserved. Alloy's prometheus.exporter.unix reads from it,
 # and external processes may write custom metrics there.
