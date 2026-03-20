@@ -31,6 +31,9 @@ alloy_listen_address: "0.0.0.0"
 # Alloy data directory (WAL, positions, etc.)
 alloy_storage_path: "/var/lib/alloy"
 
+# Alloy configuration directory
+alloy_config_dir: "/etc/alloy"
+
 # Textfile collector directory (preserved from node_exporter for compatibility)
 alloy_textfile_dir: "/var/lib/node_exporter/textfile_collector"
 
