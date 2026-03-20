@@ -165,6 +165,15 @@
     - alloy
     - verify
 
+# Flush handlers now so any pending "Restart alloy" runs BEFORE cleanup.
+# Without this, cleanup triggers "Reload systemd" which fires alongside
+# a deferred "Restart alloy" at role end — causing a port-binding race.
+- name: Flush handlers before cleanup
+  ansible.builtin.meta: flush_handlers
+  tags:
+    - alloy
+    - cleanup
+
 # ============================================================
 # CLEANUP: Remove old Promtail agent
 # ============================================================
